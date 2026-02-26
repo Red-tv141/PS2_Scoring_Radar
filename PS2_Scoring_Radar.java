@@ -1,4 +1,4 @@
-// PS2 Scoring Radar V11 - Final Edition (Safety First + 4 Categories + Firewalls)
+// PS2 Scoring Radar V11 - Final Edition (Safety First + 6 Categories + Firewalls)
 // @author Puggsy + Gemini + Claude
 // @category PlayStation2
 
