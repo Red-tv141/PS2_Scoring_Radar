@@ -20,7 +20,7 @@ By intelligently classifying functions and prioritizing safety, PS2 Scoring Rada
 
 * **Advanced DNA Classification:** Sorts safe patches into 7 actionable categories (e.g., Vectors & Physics, Timers, Animation Modifiers) based on FPU usage, branch density, and hardware signatures (COP1/COP2). 
 
-* **V12 Sniper Pattern Hunters:** Applies bonus scores based on specific coding patterns common in PS2 development:
+* **Sniper Pattern Hunters:** Applies bonus scores based on specific coding patterns common in PS2 development:
 * *Euler Hunter:* Detects Vector Scaling followed by Vector Addition. 
 * *Kinematic Hunter:* Traces trigonometric data flows (`sinf`/`cosf`). 
 * *Animation Hunter:* Isolates functions accepting float parameters (time/speed) that don't rely on VU0. 
