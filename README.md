@@ -41,13 +41,15 @@ The radar processes the binary through a strict pipeline:
 
 ## Usage Instructions
 
-1. Open your PS2 game binary in **Ghidra** (developed/tested with v12) and allow auto-analysis to complete. 
-2. Run `PS2_Scoring_Radar.java` from the Script Manager. 
-3. Choose whether to use Auto-Detection for the Main Loops or enter the addresses manually (useful for stripped games). 
-4. [cite_start](https://www.google.com/search?q=Optional) Provide the address of the global FrameRate variable if known. 
-5. Select your output destination for the `.pnach` file. 
-6. Open the generated file. Start your binary-search testing with Category 1 (`VECTORS`) and Category 2 (`TIMERS`), as these represent the highest confidence patches. 
-
+1. Load ps2 elf file in Ghidra with the Emotion Engine addon and run my script.
+2. The game will ask if you want to automatically find the game's mainloop or manually add it. It will also ask for the address responsible for the frame rate (you can choose cancel and the script will keep working)
+3. Wait for the script to finish and save the text file it outputs.
+4. Grab a batch of codes based on category and score from the generated file.
+5. Load them into PCSX2 along with a Save State right at the problematic moment in the game.
+6. Observe what happens. Because you just NOP'd these functions, some changes will occur. If you can't test if there is a change in the thing you want to fix, just use a binary search method (turn off half the code, check again, and repeat) until you isolate the exact single function responsible for the issue.
+7. Once you can test the game with the codes, look for changes. If you see things that were previously affected by the 60fps patch stop working like: animations might completely stop, an object might disappear the moment it's thrown, a specific cutscene might break, or the game camera might start shaking ect...
+It means you've hit the right target! use binary search method again, this time for finding the code of the function we will need to fix for the 60fps.
+8. Go to the address in Ghidra. From there, you can properly analyze the function and fix it for 60FPS (You can send the decomp and assembly to an AI for help)
 
 ## Output Categories
 
