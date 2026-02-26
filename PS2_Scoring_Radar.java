@@ -246,7 +246,6 @@ public class PS2_Scoring_Radar extends GhidraScript {
             }
         }
 
-        // ירוץ אם המשתמש בחר "לא", או אם החיפוש האוטומטי לא מצא כלום
         if (!autoDetect) {
             println("[MANUAL INPUT] Asking for manual MainLoop addresses...\n");
             mainLoop1Addr = askAddressOptional(
@@ -718,7 +717,6 @@ public class PS2_Scoring_Radar extends GhidraScript {
                 hits.add("HEARTBEAT_FOUND");
             }
 
-            // === HIERARCHY TIERING (CRITICAL FIX FOR DARK CLOUD 2) ===
             // If this candidate calls ANOTHER candidate, this is the Master Dispatcher!
             for (Function other : candidates) {
                 if (other.equals(func)) continue;
