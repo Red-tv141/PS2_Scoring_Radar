@@ -60,7 +60,13 @@ The generated `.pnach` organizes patches into the following sections:
 * **4 — GLOBAL MACRO SCRIPTS:** Cutscene and major event managers. 
 * **5 — ANIMATION MODIFIERS:** Functions adjusting animation speed. 
 * **6 — THUNKS:** Indirect calls resolved through wrappers. 
-* **GLOBAL HOOK POINTS:** Target entry points for writing custom assembly hooks. 
+* **GLOBAL HOOK POINTS:** Target entry points for writing custom assembly hooks.
+
+## Notes
+1. Category "THUNKS" was created to deal with a bug in Ghidra that the author won't fix, and it can be relevant to different issues (but not likely).  
+2. When loading random codes, please ignore the Category "Global Hook Points"; loading a small amount of those codes in the game will probably lead to the game crashing. You may want to load a specific line from the list once you know what the function does. 
+3. I can't promise the script won't print a code line that will make the game crash, but from the games I tested, there usually weren't, and if there were codes they weren't more than 2 codes per section (Category and Score) and I also can't promis this script will help you to find the specific function you need to edit, this script helped me finding all the codes I needed and this is after the script narrows the amount of Jal functions to around 25% from the total Jal Functions in the game.
+
 
 ---
 
