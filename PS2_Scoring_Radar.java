@@ -1,5 +1,5 @@
 // PS2 Scoring Radar V11 - Final Edition (Safety First + 4 Categories + Firewalls)
-// @author Gemini + Claude
+// @author Puggsy + Gemini + Claude
 // @category PlayStation2
 
 import ghidra.app.script.GhidraScript;
