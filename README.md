@@ -1,75 +1,134 @@
-# PS2 Scoring Radar: Advanced Static Analysis for 60FPS Patching
+# PS2 Scoring Radar V13 Final: Advanced Static Analysis for 60FPS Patching
 
 ## Overview
 
-**PS2 Scoring Radar** is an advanced, automated Ghidra script designed specifically to assist in creating 60FPS patches for PlayStation 2 games. 
+**PS2 Scoring Radar V13 Final** is an advanced, automated Ghidra script designed specifically to assist in creating 60FPS patches for PlayStation 2 games.
 
-Finding the correct instructions to NOP (zero out) in order to decouple game logic from the frame rate is a tedious manual process. This script automates that process by acting as a highly specialized static analysis engine. It scans the entire PS2 game binary, evaluates every `jal` (Jump and Link) instruction against a rigorous set of architectural rules, and outputs a ranked, ready-to-use `.pnach` file. 
+Finding the correct instructions to NOP in order to decouple game logic from the frame rate is a tedious manual process. This script automates that process by acting as a highly specialized static analysis engine. It scans the entire PS2 game binary in two passes, evaluates every `jal` instruction against a rigorous set of EE hardware-aware architectural rules, and outputs a ranked, ready-to-use `.pnach` file along with supplementary hook and thunk files.
 
-By intelligently classifying functions and prioritizing safety, PS2 Scoring Radar significantly reduces the trial-and-error traditionally required in PS2 modding. 
+By intelligently classifying functions and prioritizing safety, PS2 Scoring Radar significantly reduces the trial-and-error traditionally required in PS2 modding.
+
+---
 
 ## Key Features
 
-* **Topology-Based Auto-Detection:** Automatically identifies Main Loop and Menu Loop candidates even in stripped binaries by analyzing instruction count, call breadth, internal loops (back-edges), frame heartbeats (BeginFrame/EndFrame), and hierarchy tiering. 
+### Two-Pass Architecture
+- **Pass 1 — JAL Scanner:** Evaluates every direct `jal` instruction with full P-Code decompilation, caching, and parent context analysis.
+- **Pass 2 — Full Binary Scan:** Scans all functions for vtable/`jalr` candidates using lightweight assembly heuristics (P-Code skipped to prevent OOM on large binaries).
 
+### Topology-Based Auto-Detection
+Automatically identifies Main Loop and Menu Loop candidates even in stripped binaries by analyzing:
+- Instruction count and call breadth
+- Internal back-edges (loop detection)
+- Frame heartbeats (`BeginFrame`/`EndFrame`, `sceGsSyncV`)
+- Hierarchy tiering (whether one loop calls another)
 
-* **Multi-Layered Safety Firewalls:** Prevents crashes before they happen by blocking:
-* *Static Libraries:* Ignores Sony SDK (e.g., `sceCd`, `scePad`) and standard libc functions. 
-* *IOP Modules:* Filters out I/O Processor calls (e.g., `cdvdman`, `padman`). 
-* *Dependency Bouncer:* The ultimate safeguard—blocks any JAL if its return value (like `v0` or `f0`) is read by subsequent instructions. 
+### Hybrid Nexus Seeding
+The FrameRate Nexus accepts **either** a code address (a VSync instruction) **or** a data address (a global frame counter variable). In data mode, all functions that reference the variable are automatically used as roots for the nexus propagation tree.
 
-* **Advanced DNA Classification:** Sorts safe patches into 7 actionable categories (e.g., Vectors & Physics, Timers, Animation Modifiers) based on FPU usage, branch density, and hardware signatures (COP1/COP2). 
+### Multi-Layered Safety Firewalls
+- **Static Library Firewall:** Blocks Sony SDK (`sceCd`, `scePad`, `sceVif`, etc.) and standard libc functions.
+- **IOP Module Firewall:** Filters out I/O Processor calls (`cdvdman`, `padman`, `.IRX` references, etc.).
+- **Behavioral Firewall:** Blocks functions using `syscall`, COP0, MMIO/KSEG1 hardware access, or system strings (`assert`, `panic`, `bios`).
+- **Dependency Bouncer:** Blocks any JAL if its return value (`v0`, `v1`, `f0`) is read by subsequent instructions, including across MIPS branch delay slots.
 
-* **Sniper Pattern Hunters:** Applies bonus scores based on specific coding patterns common in PS2 development:
-* *Euler Hunter:* Detects Vector Scaling followed by Vector Addition. 
-* *Kinematic Hunter:* Traces trigonometric data flows (`sinf`/`cosf`). 
-* *Animation Hunter:* Isolates functions accepting float parameters (time/speed) that don't rely on VU0. 
-* *Struct/Global Writers:* Prioritizes functions that mutate global state rather than local pointers. 
-* **Global Hook Points Extraction:** Identifies "Pure Math" functions (like Matrix Multiply) that are unsafe to NOP individually. Instead of NOPing callers and causing invisible geometry, it provides the target entry points so you can patch them once globally. 
-* **High Performance:** Extensively caches expensive Ghidra P-Code decompilations and trait extractions to process tens of thousands of JALs efficiently. 
+### Advanced DNA Classification
+Sorts safe patches into actionable categories based on FPU usage, branch density, hardware signatures (COP1/COP2/VU0), and call topology:
 
-## How It Works
+| Category | Description |
+|---|---|
+| `TIMERS` | Frame counters and tick logic |
+| `VECTORS` | VU0/COP1/COP2 math, physics |
+| `ANIMATION_MODIFIERS` | Float-param animation speed functions |
+| `ANIM_TICKERS` | Animation/physics managers that call other functions |
+| `STATE_MACHINES` | AI dispatchers and logic engines |
+| `MACRO_SCRIPTS` | Cutscene and major event managers |
+| `THUNKS` | Resolved vtable wrapper entries |
 
-The radar processes the binary through a strict pipeline:
+### Per-Category Caller Ceilings & Penalties
+Each category has a maximum caller count and a per-caller score penalty to prevent utility functions from being promoted above specialized gameplay functions.
 
-1. **Firewalls:** Immediately discards system, IO, and dependency-critical calls. 
-2. **Thunk Resolution:** Manually resolves bare `j` wrappers that Ghidra might misinterpret, ensuring accurate analysis of the true target. 
-3. **Base Scoring:** Evaluates the JAL across 5 layers (DNA type, Kill Zone depth, Address safety, Tree depth, and FrameRate Nexus connection). 
-4. **Pattern Hunting:** Modifies the score based on advanced heuristic modules (Euler, Kinematic, etc.). 
-5. **Output:** Generates a ranked `.pnach` file formatted for immediate testing in PCSX2. 
+### Pattern Hunter Modules
+- **Euler Hunter:** Detects Vector Scale → Vector Add sequences.
+- **Kinematic Hunter:** Traces trigonometric data flows (`sinf`/`cosf`) back through P-Code.
+- **Animation Hunter:** Isolates functions accepting computed float parameters (time/speed deltas).
+- **Global State Writer:** Boosts functions that write to global RAM addresses near the call site.
+- **Entity Struct Writer:** Boosts functions that write to struct offsets (`swc1`/`sqc2` with offsets ≤ `0x60`).
+- **Hierarchy Matrix:** Promotes Singleton callers; penalizes Batch/loop callers.
 
+### Vtable Safety Scoring
+For Pass 2 vtable candidates, a Blast Radius analysis evaluates:
+- Function size and branch complexity (danger penalties)
+- System library callees (`malloc`, `sceCd`, etc.)
+- High-fan-in utility callees
+- Leaf callee ratio and safe-domain propagation (safety bonuses)
+
+### Vtable Cluster Synergy
+Adjacent vtable candidates of the same category within `0x1000` bytes receive a cluster bonus, promoting coherent vtable blocks.
+
+### Cross-Category Context Bonus
+After scoring, functions that are called near other already-confirmed strong targets (within ±5 JALs in the same parent) receive a context bonus.
+
+### 60FPS Stride Hunter (Passive)
+Scans Main Loop candidates for:
+- **Integer strides:** `addiu`/`li` with `zero` base and value `1`, `2`, `-1`, `-2`
+- **Float deltas:** `lwc1` loading IEEE 754 constants near `1/30` (≈`0.03333f`) or `1/60` (≈`0.01666f`)
+
+Results are reported in the output file and console but do **not** generate automatic patches — manual inspection is required.
+
+### Smart Delay Slot Generation
+The delay slot word after each `jr ra` patch is chosen per category:
+- `VECTORS` → `00000000` (NOP — avoids corrupting hardware registers)
+- COP1/heavy-FPU targets → `44800000` (`mtc1 zero,$f0` — safe float return)
+- All others → `0000102D` (`move v0,zero` — null pointer return)
+
+### Memory Safety
+- HighFunction (P-Code) cache is cleared between Pass 1 and Pass 2.
+- `suppressHFCache` mode prevents OOM during the full-binary Pass 2 scan.
+
+---
+
+## Output Files
+
+| File | Contents |
+|---|---|
+| `<name>.txt` | Main ranked `.pnach` patch list, split by category and caller count |
+| `<name>_global_hooks.txt` | Central entry points for custom ASM redirections |
+| `<name>_thunks.txt` | Thunk hooks whose real target was not caught by Pass 1 |
+| `<name>_tracer.txt` | *(Optional)* All targets in a single file for binary search in PCSX2 |
+
+---
 
 ## Usage Instructions
 
-1. Load ps2 elf file in Ghidra with the Emotion Engine addon and run my script.
-2. The game will ask if you want to automatically find the game's mainloop or manually add it. It will also ask for the address responsible for the frame rate (you can choose cancel and the script will keep working)
-3. Wait for the script to finish and save the text file it outputs.
-4. Grab a batch of codes based on category and score from the generated file.
-5. Load them into PCSX2 along with a Save State right at the problematic moment in the game.
-6. Observe what happens. Because you just NOP'd these functions, some changes will occur. If you can't test if there is a change in the thing you want to fix, just use a binary search method (turn off half the code, check again, and repeat) until you isolate the exact single function responsible for the issue.
-7. Once you can test the game with the codes, look for changes. If you see things that were previously affected by the 60fps patch stop working like: animations might completely stop, an object might disappear the moment it's thrown, a specific cutscene might break, or the game camera might start shaking ect...
-It means you've hit the right target! use binary search method again, this time for finding the code of the function we will need to fix for the 60fps.
-8. Go to the address in Ghidra. From there, you can properly analyze the function and fix it for 60FPS (You can send the decomp and assembly to an AI for help)
+1. Load the PS2 ELF in Ghidra with the Emotion Engine processor addon and run the script.
+2. Choose auto-detect or manually enter the Gameplay and Menu Main Loop addresses.
+3. Optionally provide a FrameRate Nexus address — either a VSync instruction (code) or a global frame counter variable (data). Press Cancel to skip.
+4. Choose an output file path and whether to generate a Tracer Bullets file.
+5. Wait for the two-pass scan to complete.
+6. Open the generated `.txt` file. Take a batch of codes from one category/score group at a time.
+7. Load them into PCSX2 alongside a Save State at the problematic moment.
+8. Observe what breaks. Broken animations, disappearing objects, camera shake, or cutscene failures all indicate you've found a frame-rate-coupled function.
+9. Use binary search (disable half the codes, retest, repeat) to isolate the exact function.
+10. Navigate to the address in Ghidra and analyze or decompile the function to write a proper 60FPS fix. AI assistance with the decompiled output is recommended.
 
-## Output Categories
+---
 
-The generated `.pnach` organizes patches into the following sections:
-* **1 — VECTORS & PHYSICS:** VU0 coprocessor calls and kinematic updates. 
-* **2 — TIMERS & TICKERS:** Frame counters and tick logic. 
-* **3 — ENTITY STATE MACHINES:** AI and general logic dispatchers. 
-* **4 — GLOBAL MACRO SCRIPTS:** Cutscene and major event managers. 
-* **5 — ANIMATION MODIFIERS:** Functions adjusting animation speed. 
-* **6 — THUNKS:** Indirect calls resolved through wrappers. 
-* **GLOBAL HOOK POINTS:** Target entry points for writing custom assembly hooks.
+## STATE_MACHINES Warning
+
+The output file separates `STATE_MACHINES` into a dedicated section with a warning. If the game softlocks after patching, change the delay slot word from `0000102D` (`move v0,zero`) to `24020001` (`li v0,1`) to return `TRUE` instead of `NULL`.
+
+---
 
 ## Notes
-1. Category "THUNKS" was created to deal with a bug in Ghidra that the author won't fix, and it can be relevant to different issues (but not likely).  
-2. When loading random codes, please ignore the Category "Global Hook Points"; loading a small amount of those codes in the game will probably lead to the game crashing. You may want to load a specific line from the list once you know what the function does. 
-3. I can't promise the script won't print a code line that will make the game crash, but from the games I tested, there usually weren't, and if there were codes they weren't more than 2 codes per section (Category and Score) and I also can't promis this script will help you to find the specific function you need to edit, this script helped me finding all the codes I needed and this is after the script narrows the amount of Jal functions to around 25% from the total Jal Functions in the game.
 
-
----
-
-Developed for the PS2 Modding Community. Tested on PS2 MIPS EE binaries. 
+1. **THUNKS** exist to handle Ghidra's occasional failure to resolve indirect vtable calls. They may be relevant to various issues but are less likely to contain the primary frame-rate coupling.
+2. **Global Hook Points** (`_global_hooks.txt`) are entry points for writing custom ASM, **not** for bulk NOPing. Loading many of these as `jr ra` patches will likely crash the game. Use them only once you know exactly what a function does.
+3. The script cannot guarantee zero crash-inducing patches, but in testing, crash-causing codes are rare (typically fewer than 2 per category group). It also cannot guarantee it will find every frame-coupled function — but in practice it narrows the search to roughly 25% of total JAL instructions in the binary.
+4. The Tracer Bullets file (`_tracer.txt`) is designed for rapid binary search: disable half at a time in PCSX2 until the crash disappears.
 
 ---
+
+*Developed for the PS2 Modding Community. Tested on PS2 MIPS EE binaries.*
+*Architecture: V11 Safety Core + V12 Binary Profiling + V13 EE Specifics + V13 Final.*
+*@author Gemini + Claude + Puggsy*
