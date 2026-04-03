@@ -26,6 +26,8 @@ public class PS2_Scoring_Radar extends GhidraScript {
     private static final long PS2_BASE        = 0x00100000L;
     private static final long MMIO_START      = 0x10000000L;
     private static final long MMIO_END        = 0x1000FFFFL;
+    private static final long GS_PRIV_START   = 0x12000000L;
+    private static final long GS_PRIV_END     = 0x12001FFFL;
     private static final long KSEG1_START     = 0x20000000L;
     private static final long SPR_START       = 0x70000000L;
     private static final long SPR_END         = 0x70003FFFL;
@@ -100,7 +102,7 @@ public class PS2_Scoring_Radar extends GhidraScript {
         "printf","sprintf","vsprintf","strcpy","strlen","strcmp","strcat",
         "sin","cos","tan","atan","atan2","sqrt","pow","exp","log","fabs","floor","ceil",
         "__builtin_new","__builtin_vec_new","__builtin_delete",
-        "__sti","__std","_GLOBAL_","__gnu_","__cxa_","_Z",
+        "__sti","__std","_GLOBAL_","__gnu_","__cxa_",
         "sceOpen","sceClose","sceRead","sceWrite","sceLseek",
         "sceSifCallRpc","sceSifBindRpc"
     };
@@ -966,7 +968,7 @@ public class PS2_Scoring_Radar extends GhidraScript {
         for(Address addr:func.getBody().getAddresses(true)){
             for(Reference ref:refManager.getReferencesFrom(addr)){
                 long off=ref.getToAddress().getOffset();
-                if((off>=MMIO_START&&off<=MMIO_END)||off>=KSEG1_START) return true;
+                if((off>=MMIO_START&&off<=MMIO_END)||(off>=GS_PRIV_START&&off<=GS_PRIV_END)||off>=KSEG1_START) return true;
             }
         }
         return false;
@@ -990,8 +992,11 @@ public class PS2_Scoring_Radar extends GhidraScript {
                 if(data!=null&&data.hasStringValue()){
                     String str=data.getDefaultValueRepresentation().toLowerCase();
                     if(str.contains("error")||str.contains("assert")||str.contains("debug")||
-                       str.contains("panic")||str.contains("sce")||str.contains("bios")||
+                       str.contains("panic")||str.contains("bios")||
                        str.contains("kernel")) return true;
+                    // SCE SDK match: "sce" followed by uppercase (sceGs, scePad, etc.)
+                    // Avoids false positives on "scene", "ascend", "crescent", etc.
+                    if(str.matches("(?i).*\\bsce[A-Z].*")) return true;
                 }
             }
         }
@@ -1024,14 +1029,27 @@ public class PS2_Scoring_Radar extends GhidraScript {
             while(cur!=null&&checked<5){
                 if(!parentFunc.getBody().contains(cur.getAddress())) break;
 
-                // ABI Clobber Guard
+                // ABI Clobber Guard — jal/jalr/bal all clobber $ra and invoke a subroutine
                 String curMnem=cur.getMnemonicString();
-                if(curMnem!=null&&(curMnem.equals("jal")||curMnem.equals("jalr"))) break;
+                if(curMnem!=null&&(curMnem.equals("jal")||curMnem.equals("jalr")||
+                   curMnem.equals("bal")||curMnem.startsWith("bgezal"))) break;
 
                 // Branch Delay Slot Guard: branches in MIPS always execute the next instruction
                 // (the delay slot) before taking the jump. If v0 is read inside that delay slot
                 // we must catch it even if it's the 6th instruction in our window.
                 boolean isBranch=(curMnem!=null&&(curMnem.startsWith("b")||curMnem.equals("j")));
+
+                // Double delay slot guard: if this instruction IS inside another branch's
+                // delay slot (aggressive O3 optimization), control flow is too complex to
+                // track linearly — bail out conservatively.
+                if(checked>0&&isBranch){
+                    Instruction prev=getInstructionBefore(cur.getAddress());
+                    if(prev!=null){
+                        String pm=prev.getMnemonicString();
+                        if(pm!=null&&(pm.startsWith("b")||pm.equals("j")||pm.equals("jal")||pm.equals("jalr")))
+                            break; // nested branch in delay slot — abort scan
+                    }
+                }
 
                 for(Object obj:cur.getInputObjects()){
                     if(!(obj instanceof ghidra.program.model.lang.Register)) continue;
@@ -1332,10 +1350,14 @@ public class PS2_Scoring_Radar extends GhidraScript {
             if(ml.contains("c1")||ml.endsWith(".s")||ml.endsWith(".d")) traits.usesCop1=true;
             if(ml.startsWith("vadd")||ml.startsWith("vmul")||ml.startsWith("vsub")||
                ml.startsWith("vscl")||ml.startsWith("vdiv")||ml.startsWith("vmfir")||
-               ml.startsWith("vmtir")||ml.contains("c2")) traits.usesCop2=true;
+               ml.startsWith("vmtir")||ml.startsWith("vabs")||ml.startsWith("vsqrt")||
+               ml.startsWith("vrsqrt")||ml.startsWith("vwaitq")||ml.startsWith("vopmula")||
+               ml.startsWith("vitof")||ml.startsWith("vftoi")||
+               ml.contains("c2")) traits.usesCop2=true;
             if(ml.equals("lqc2")||ml.equals("sqc2")){traits.usesCop2=true;traits.quadwordVU++;}
             if(ml.equals("lq")||ml.equals("sq")) traits.quadwordGeneral++;
-            if(ml.startsWith("madda")||ml.startsWith("vmadd")||ml.startsWith("vmsub")||ml.startsWith("madd")) traits.accOps++;
+            if(ml.startsWith("madda")||ml.startsWith("vmadd")||ml.startsWith("vmsub")||ml.startsWith("madd")||
+               ml.startsWith("vmula")||ml.startsWith("vadda")||ml.startsWith("vsuba")||ml.startsWith("vopmula")) traits.accOps++;
 
             // Return path count — FIX: ONLY 'jr' is a return in MIPS.
             // 'jalr' is a virtual call (C++ vtable dispatch), NOT a return.
@@ -1383,7 +1405,7 @@ public class PS2_Scoring_Radar extends GhidraScript {
                     traits.floatOps++;
                 // Count calls at instruction level — catches jalr (C++ virtuals) that
                 // Ghidra's getFunctionCalledFunctions() sometimes misses in stripped binaries
-                if(ml.equals("jal")||ml.equals("jalr")) traits.callOps++;
+                if(ml.equals("jal")||ml.equals("jalr")||ml.equals("bal")||ml.startsWith("bgezal")) traits.callOps++;
             }
 
             instrIdx++;
@@ -1656,7 +1678,7 @@ public class PS2_Scoring_Radar extends GhidraScript {
             w.println("// =========================================================");
             w.println("// STATE_MACHINES — SOFTLOCK RISK ("+softlockTargets.size()+")");
             w.println("// If game freezes after patching, change delay slot word from");
-            w.println("// 0000102D (move v0,zero) → 24020001 (li v0,1) to return TRUE.");
+            w.println("// 00001021 (move v0,zero) → 24020001 (li v0,1) to return TRUE.");
             w.println("// =========================================================");
             w.println();
             writePnachSection(w, softlockTargets, true);
@@ -1717,7 +1739,7 @@ public class PS2_Scoring_Radar extends GhidraScript {
     private String buildDelaySlot(String cat, FuncTraits t){
         if(cat.equals("VECTORS")) return "00000000";       // NOP — don't corrupt HW registers
         if(t.usesCop1||t.floatOps>5) return "44800000";   // mtc1 zero,$f0 — safe float return
-        return "0000102D";                                  // move v0,zero — null pointer return
+        return "00001021";                                  // move v0,zero (addu) — null pointer return
     }
 
     // =========================================================
